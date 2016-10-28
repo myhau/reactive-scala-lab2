@@ -1,10 +1,10 @@
 package com.example.actors
 
 import akka.actor.{Actor, ActorLogging, ActorRef}
+import com.example.actors.MessagesAndStates.Bid
 
 import scala.concurrent.duration.FiniteDuration
 import scala.util.Random
-
 import scala.concurrent.ExecutionContext.Implicits.global
 
 sealed trait BuyerEvents

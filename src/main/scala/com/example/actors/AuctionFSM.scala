@@ -1,32 +1,13 @@
 package com.example.actors
 
 import akka.actor.{ActorLogging, ActorRef, FSM}
+import com.example.actors.MessagesAndStates._
 
 import scala.concurrent.duration._
 
-import scala.concurrent.ExecutionContext.Implicits.global
-
-sealed trait State
-case object Created extends State
-case object Ignored extends State
-case object Activated extends State
-case object Sold extends State
 
 
-sealed trait Data
-case object Uninitalized extends Data
-final case class HighestBid(cents: Int, byWho: ActorRef) extends Data
-
-sealed trait AuctionMessage
-case class Bid(cents: Int, bidder: ActorRef) extends AuctionMessage
-case object Relist extends AuctionMessage
-case object BidTimerExpired extends AuctionMessage
-case object DeleteTimerExpired extends AuctionMessage
-
-
-// TODO: - auction become
-// TODO: - timers in fsm
-class Auction(val auctionName: String, initialPrice: Int = 0) extends FSM[State, Data] with ActorLogging {
+class AuctionFSM(val auctionName: String, initialPrice: Int = 0) extends FSM[State, Data] with ActorLogging {
 
   log.info(s"Created auction $auctionName with initialPrice $initialPrice")
 
@@ -50,7 +31,6 @@ class Auction(val auctionName: String, initialPrice: Int = 0) extends FSM[State,
     }
     case Event(BidTimerExpired, state @ _) => {
       log.info("Auction expired and will be ignored")
-      startDeleteTimer()
       goto(Ignored) using state
     }
   }
@@ -82,7 +62,6 @@ class Auction(val auctionName: String, initialPrice: Int = 0) extends FSM[State,
     }
     case Event(BidTimerExpired, state @ HighestBid(price, buyer)) => {
       log.info(s"Auction was sold, result for $price to ${buyer.path.name}")
-      startDeleteTimer()
       notifyBuyer(buyer, price)
       goto(Sold) using state
     }
@@ -99,20 +78,34 @@ class Auction(val auctionName: String, initialPrice: Int = 0) extends FSM[State,
     }
   }
 
+
   def notifyBuyer(buyer: ActorRef, price: Int): Unit = {
     buyer ! Won(auctionName, price)
   }
 
   def startBidTimer(): Unit = {
-    context.system.scheduler.scheduleOnce(BIDDING_TIMER_DURATION, self, BidTimerExpired)
+    setTimer("bidTimer", BidTimerExpired, BIDDING_TIMER_DURATION)
+  }
+
+  def cancelBidTimer(): Unit = {
+    cancelTimer("bidTimer")
   }
 
   def startDeleteTimer(): Unit = {
-    context.system.scheduler.scheduleOnce(DELETE_TIMER_DURATION, self, DeleteTimerExpired)
+    setTimer("deleteTimer", DeleteTimerExpired, DELETE_TIMER_DURATION)
+  }
+
+  def cancelDeleteTimer(): Unit = {
+    cancelTimer("deleteTimer")
+  }
+
+  onTransition {
+    case Activated -> Sold => startDeleteTimer()
+    case Created -> Ignored => startDeleteTimer()
+    case Ignored -> Activated =>
+      cancelDeleteTimer()
+      startBidTimer()
   }
 
 }
 
-object Auction {
-  def apply(auctionName: String, initialPrice: Int = 0): Auction = new Auction(auctionName, initialPrice)
-}
